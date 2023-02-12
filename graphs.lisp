@@ -8,14 +8,6 @@
 		 (recur (- k 1) (cons (letter (+ 64 k)) lis)))))
     (recur n nil)))
 
-(defun edge (a b)
-  (list a b))
-
-(defun edge-set (edges)
-  (if (null edges)
-      nil
-      (cons (car edges) (edge-set (cdr edges)))))
-
 (defun assign-edge ()
   (if (> (random 2) 0)
       t
@@ -44,25 +36,18 @@
       (setf *random-state* (make-random-state t))
       (list lis (random-edges lis)))))
 
-(defun edge-list (node nodes)
-  (cond ((null nodes)
-	 nil)
-	((assign-edge)
-	 (cons (cadr nodes) (edge-list node (cdr nodes))))
-	(t
-	 (edge-list node (cdr nodes)))))
-
 (defun neighbors (node edges)
   (mapcar #'car
 	  (mapcar #'(lambda (x) (set-difference x (list node)))
 		  (remove-if #'(lambda (x) (not (member node x))) edges))))
 
 (defun print-adjacency-list (graph)
-  (dolist (node (adjacency-list graph))
-    (format t "~& ~S -> " (car node))
-    (dolist (edge (second node))
-      (format t "|~S|->" edge))
-    (format t "|/|" (car (last (second node))))))
+  (dolist (nodes (adjacency-list graph))
+    (format t "~& ~S: " (car nodes))
+    (do ((in (cdr nodes) (cdr in)))
+	((null in) 'done)
+      (format t "~S" (car in))
+      (if (cdr in) (format t ",")))))
 
 (defun letter-index (letter)
   (let ((c (coerce letter 'character)))
@@ -90,32 +75,13 @@
 	(format t "~2d" (aref matrix i j))))))
 
 ;;; applicative adjacency list construction
+;;; car is node, cdr are adjacenct nodes
 (defun adjacency-list (g)
   (let ((v (first g)) (e (second g)))
-    (mapcar #'(lambda (x) (cons x (list (neighbors x e)))) v)))
-
-;;; if we ever don't want the consed node symbols
-(defun adjacency-list-beta (nodes edges)
-  (mapcar #'(lambda (x) (neighbors x edges)) nodes))
-
-(defun print-dot-graph (g)
-  (let ((edges (second g)))
-    (progn
-      (format t "graph {")
-      (dolist (edge edges)
-	(format t " ~S -- ~S " (first edge) (second edge)))
-      (format t "}"))))
+    (pairlis v (mapcar #'(lambda (x) (neighbors x e)) v))))
 
 (defun node-color (label color)
   (format nil "~&~S [fillcolor=~A]" (string label) color))
-
-(defun node-colors (nodes)
-  (do ((in nodes (cdr in))
-       (colors
-	'("red" "orange" "yellow" "green" "blue" "indigo" "violet")
-	(cdr colors))
-       (out nil (cons (node-color (car in) (car colors)) out)))
-      ((null in) (reverse out))))
 
 (defun write-dot-file (g)
   (let ((edges (second g)))
@@ -131,8 +97,8 @@
 	  (format outfile "~&~a [fillcolor=~a]" (car node) (cdr node)))
 	(format outfile "}")))))
 
-(defun random-choice (lis)
-  (nth (random (length lis)) lis))
+;; (defun random-choice (lis)
+;;   (nth (random (length lis)) lis))
 
 (defun degree (node graph)
   (let ((edges (second graph)))
@@ -148,63 +114,38 @@
 (defun ordered-degree-alist (graph)
   (sort (pairlis (first graph) (degree-list graph)) #'> :key #'cdr))
 
-(defun non-neighbors (node v e)
-  (set-difference v (neighbors node e)))
+;;; returns nil if node not ajacent to any node in nodes
+(defun none-adjacent-p (node nodes adjlis)
+  (not (remove nil (mapcar #'(lambda (x) (adjacent-p node x adjlis)) nodes))))
 
-(defun paint-aux (node v e)
-  (set-difference v (neighbors node e)))
+(defun adjacent (node1 node2 adjlis)
+  (member node1 (cdr (assoc node2 adjlis))))
 
-;;; Welch-Powell algorithm (Seymour Lipschutz, Discrete Mathematics)
-(defun paint (graph)
-  (let ((v (mapcar #'car (ordered-degree-alist graph)))
-	(e (second graph))
-	(colors '(red orange yellow green blue indigo violet)))
-    (do ((nodes v)
-	 (c colors (cdr c))
-	 (coloring nil))
-	((null nodes) coloring)
-      (let ((seq (non-neighbors (car nodes) nodes e)))
-	(format t "~&~S" seq)
-	(dolist (item seq)
-	  (cond ((null (all-adjacents item seq graph))
-		 (setf coloring (cons (cons item (car c)) coloring))
-		 (setf nodes (remove item nodes)))))))))
-
-(defun adjacent (v1 v2 g)
-  (member (list v1 v2) (second g) :test 'equalp))
-
-(defun adjacent-p (v1 v2 g)
-  (if (null (adjacent v1 v2 g))
+(defun adjacent-p (v1 v2 adjlis)
+  (if (null (adjacent v1 v2 adjlis))
       nil
       t))
 
-(defun all-adjacents (v seq g)
-  (remove nil (mapcar #'(lambda (x) (adjacent v x g)) seq)))
+(defun adjacent-nodes (node adjlis)
+  (cdr (assoc node adjlis)))
 
-(defun adjacent-nodes (v g)
-  (let ((e (second g)))
-     (remove-if #'null
-		(mapcar #'car
-			(mapcar #'(lambda (x) (set-difference x (list v)))
-				(mapcar #'(lambda (x) (member v x)) e))))))
+(defun non-adjacent-nodes (node nodes adjlis)
+  (set-difference nodes (adjacent-nodes node adjlis)))
 
-(defun non-adjacent-nodes (v g)
-  (set-difference (first g) (adjacent-nodes v g)))
-
-;;; auxiliary function for use below
-(defun non-adjacent-nodes-aux (v nodes g)
-  (set-difference nodes (adjacent-nodes v g)))
-
+;;; Welch-Powell algorithm.
 (defun color (g)
   (let ((v (mapcar #'car (ordered-degree-alist g)))
-	(colors '(red orange yellow green blue indigo violet)))
+	(colors '(red orange yellow green blue indigo violet))
+	(adjlis (adjacency-list g)))
     (do ((nodes v)
 	 (c colors (cdr c))
 	 (coloring nil))
 	((null nodes) coloring)
-      (let ((seq (non-adjacent-nodes-aux (car nodes) nodes g)))
+      (let ((seq (non-adjacent-nodes (car nodes) nodes adjlis))
+	    (assigned nil))
 	(format t "~&~S" seq)
 	(dolist (item seq)
-	  (cond ((null (all-adjacents item seq g))
+	  (cond ((none-adjacent-p item assigned adjlis)
 		 (setf coloring (cons (cons item (car c)) coloring))
+		 (setf assigned (cons item assigned))
 		 (setf nodes (remove item nodes)))))))))
